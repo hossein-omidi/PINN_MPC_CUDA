@@ -10,9 +10,10 @@ matplotlib.use('TkAgg')
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
+
 # System parameters
-w0 = 0.0082  # kg/kg, initial humidity ratio
-ws = 0.0080  # kg/kg, supply air humidity ratio
+w0 = 8.2  # kg/kg, initial humidity ratio
+ws = 8.0  # kg/kg, supply air humidity ratio
 Cpa = 1000  # J/(kg·K)
 Cpw = 4180  # J/(kg·K)
 hw = 800000  # J/kg
@@ -31,13 +32,13 @@ def generate_setpoint_mpc(t_now):
     """Dynamic reference generator for all three states"""
     if t_now < 500:
         Tt_ref = 23 + 1.5 * np.sin(0.05 * t_now)
-        wt_ref = 0.0080 + 0.0005 * np.sin(0.025 * t_now)
-        Ts_ref = 18 + 2 * np.cos(0.03 * t_now)  # Varying Ts reference
+        wt_ref = 8 + 1 * np.sin(0.025 * t_now)
+        Ts_ref = 18
     else:
         step_index = int((t_now - 500) // 200)
         Tt_ref = 23 + (step_index % 4) * 0.5
-        wt_ref = 0.0080 + (step_index % 4) * 0.0005
-        Ts_ref = 18 + (step_index % 3) * 1.0  # Step changes for Ts
+        wt_ref = 8 + (step_index % 4) * .5
+        Ts_ref = 18
     return np.array([Tt_ref, wt_ref, Ts_ref])
 
 
@@ -46,14 +47,15 @@ def system_dynamics(t, x, u):
     Tt, wt, Ts = x
     fa_dot, fw_dot, u3 = u
 
+    # Differential equations
     dTt = (1 / (rho_a * Cpa * Vt)) * (Q_dot0 - hfg * M_dot0) + \
-          ((fa_dot * hfg) / (Cpa * Vt)) * (wt - ws) - (fa_dot / Vt) * (Tt - Ts)
+          ((fa_dot * hfg) / (1000 * Cpa * Vt)) * (wt - ws) - (fa_dot / Vt) * (Tt - Ts)
 
-    dwt = (M_dot0 / (rho_a * Vt)) - (fa_dot / Vt) * (wt - ws) + u3
+    dwt = 1000 * (M_dot0 / (rho_a * Vt)) - (fa_dot / Vt) * (wt - ws) + u3
 
     dTs = (fa_dot / Vc) * (Tt - Ts) + \
           (0.25 * fa_dot / Vc) * (T0 - Tt) - \
-          (fa_dot * hw / (Cpa * Vc)) * (0.25 * w0 + 0.75 * wt - ws) - \
+          (fa_dot * hw / (1000 * Cpa * Vc)) * (0.25 * w0 + 0.75 * wt - ws) - \
           (fw_dot * rho_w * Cpw * dTc) / (rho_a * Cpa * Vc)
 
     return np.array([dTt, dwt, dTs])
@@ -71,8 +73,8 @@ def rk4_step(x, u, dt):
 def run_mpc_simulation():
     # Timing parameters
     dt_rk4 = 0.1  # 100Hz simulation
-    dt_mpc = 0.5  # 5Hz control updates
-    total_time = 50  # 10 minutes simulation
+    dt_mpc = 0.2  # 5Hz control updates
+    total_time = 1500  # 10 minutes simulation
     n_steps = int(total_time / dt_rk4)
     mpc_interval = int(dt_mpc / dt_rk4)
 
@@ -80,9 +82,9 @@ def run_mpc_simulation():
     # Model initialization with checks
     model = get_model("lstm", {
         'input_dim': 6, 'hidden_dim': 256,
-        'layer_dim': 8, 'output_dim': 3
+        'layer_dim': 12, 'output_dim': 3
     })
-    model.load_state_dict(torch.load("PINN_STZ.pth", map_location=device))
+    model.load_state_dict(torch.load("PINN_STZ_colab.pth", map_location=device))
     model.eval()
 
     model.eval()
@@ -92,21 +94,21 @@ def run_mpc_simulation():
         'control': {
             'fa_dot': (0.1, 5.0),
             'fw_dot': (0.0, 0.003),
-            'u3': (-1e-5, 1e-5)
+            'u3': (-1e-2, 1e-2)
         },
         'state': {
             'Tt': (16.0, 32.0),
-            'wt': (0.0065, 0.0095),
+            'wt': (6.5, 9.5),
             'Ts': (10.0, 26.0)
         }
     }
 
     # Weight matrices with enhanced tracking emphasis
-    W = np.diag([1000, 1000, 10])  # 100x higher weight for Tt/wt tracking
-    R = np.diag([0.1, 0.1, 5])  # Reduced control effort penalty (softer constraints)
+    W = np.diag([100, 100, 1])  # 100x higher weight for Tt/wt tracking
+    R = np.diag([1, 1, 5])  # Reduced control effort penalty (softer constraints)
 
     # Initialize states and controls
-    current_state = np.array([23.0, 0.0080, 18.0])  # Initial condition
+    current_state = np.array([23.0, 8.0, 18.0])  # Initial condition
     states = np.zeros((n_steps, 3))
     controls = np.zeros((n_steps, 3))
     states[0] = current_state
@@ -129,11 +131,11 @@ def run_mpc_simulation():
                     model=model,
                     W=W,
                     R=R,  # Added control effort weighting matrix
-                    lambda_tracking=100,
+                    lambda_tracking=1,
                     lambda_terminal=0.1,
-                    lambda_integral=50,
-                    w_state_con=1e6,
-                    w_control_con=1e6,
+                    lambda_integral=.51,
+                    w_state_con=.1,
+                    w_control_con=.1,
                     s=1e-4,
                     max_iter=10,
                     dt=dt_mpc

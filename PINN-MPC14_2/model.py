@@ -109,7 +109,7 @@ class LossFuc:
     def pinnloss(self, dt, lamda):
         yh = self.model(self.x_train)  # Predicted next states [Tt_next, wt_next, Ts_next]
         loss1 = torch.mean((yh[:, 0] - self.y_train[:, 0]) ** 2) + \
-                2*torch.mean((yh[:, 1] - self.y_train[:, 1]) ** 2) + \
+                1.5*torch.mean((yh[:, 1] - self.y_train[:, 1]) ** 2) + \
                 torch.mean((yh[:, 2] - self.y_train[:, 2]) ** 2)
 
         # Physics residual calculation
@@ -182,7 +182,7 @@ class Optimization:
                 initial_lambda = 1e-1
                 scaling_factor = 1 + i / n_epochs  # Gradually increase lambda
 
-                lamda = initial_lambda * scaling_factor  # Gradually increase physics weight
+                lamda = 5 # Gradually increase physics weight
 
                 # Compute PINN loss with new physics
                 nnlossfuc = LossFuc(model=self.model, x_train=x_train, y_train=y_train)

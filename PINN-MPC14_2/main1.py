@@ -9,7 +9,6 @@ import csv
 import os
 import matplotlib
 
-matplotlib.use('TkAgg')
 from model import get_model, Optimization
 import numpy as np
 from sklearn.model_selection import train_test_split
@@ -58,7 +57,7 @@ y_test = torch.FloatTensor(y_test).to(device)
 # Model define
 mo = 'PINN'
 hidden_dim = 256  # Increased capacity for MIMO system
-layer_dim = 8   # Deeper network
+layer_dim = 12  # Deeper network
 input_dim = 6      # 3 states + 3 inputs
 output_dim = 3     # 3 output states
 
@@ -77,10 +76,10 @@ weight_decay = 1e-6
 optimizer = optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
 opt = Optimization(model=model, mo=mo, optimizer=optimizer)
 # training
-n_epochs = 5000
+n_epochs = 10000
 opt.train(x_train, y_train, n_epochs)
 # Save model
-torch.save(model.state_dict(), mo + "_STZ.pth")
+torch.save(model.state_dict(), mo + "_STZ_colab.pth")
 # Testing Prediction
 yt = model(x_test)
 loss_test = torch.mean((yt - y_test) ** 2).detach()  # MSE test
