@@ -145,7 +145,7 @@ def run_mpc_simulation():
                         w_state_con=1e6,
                         w_control_con=1e6,
                         s=1e-3,
-                        horizon=30  # Explicitly add horizon parameter
+                        horizon=30,  # Explicitly add horizon parameter
                         dt=dt_mpc,
                         max_iter=150  # Now correctly assigned
                     )
