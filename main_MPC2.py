@@ -75,7 +75,7 @@ def run_mpc_simulation():
     # Timing parameters
     dt_rk4 = 0.1  # 100Hz simulation
     dt_mpc = 0.2  # 5Hz control updates
-    total_time = 1500  # 10 minutes simulation
+    total_time = 250  # 10 minutes simulation
     n_steps = int(total_time / dt_rk4)
     mpc_interval = int(dt_mpc / dt_rk4)
 
@@ -83,9 +83,9 @@ def run_mpc_simulation():
     # Model initialization with checks
     model = get_model("lstm", {
         'input_dim': 6, 'hidden_dim': 256,
-        'layer_dim': 12, 'output_dim': 3
+        'layer_dim': 5, 'output_dim': 3
     })
-    model.load_state_dict(torch.load("PINN_STZ_colab.pth", map_location=device))
+    model.load_state_dict(torch.load("PINN_STZ_colab2.pth", map_location=device))
     model.eval()
 
     model.eval()
@@ -105,8 +105,9 @@ def run_mpc_simulation():
     }
 
     # Weight matrices with enhanced tracking emphasis
-    W = np.diag([100, 100, 1])  # 100x higher weight for Tt/wt tracking
-    R = np.diag([1, 1, 5])  # Reduced control effort penalty (softer constraints)
+    # Proposed Changes
+    W = np.diag([500, 500, 1])  # Increase tracking priority for Tt/wt
+    R = np.diag([0.1, 0.5, 1])  # Reduce control penalty
 
     # Initialize states and controls
     current_state = np.array([23.0, 8.0, 18.0])  # Initial condition
@@ -120,30 +121,43 @@ def run_mpc_simulation():
     for t in range(1, n_steps):
         current_time = t * dt_rk4
         current_ref = generate_setpoint_mpc(current_time)
+        
+        
+        
+        
+        
+        
 
-        # MPC control update
         if t >= next_mpc_step:
-            try:
-                current_control, pred, _ = cost_fun_mimo(
-                    current_states=states[t - 1],
-                    prev_controls=current_control,
-                    references=current_ref,
-                    bounds=bounds,
-                    model=model,
-                    W=W,
-                    R=R,  # Added control effort weighting matrix
-                    lambda_tracking=1,
-                    lambda_terminal=0.1,
-                    lambda_integral=.51,
-                    w_state_con=.1,
-                    w_control_con=.1,
-                    s=1e-4,
-                    max_iter=10,
-                    dt=dt_mpc
-                )
-                next_mpc_step += mpc_interval
-            except Exception as e:
-                print(f"MPC failure at {current_time:.1f}s: {str(e)}")
+                try:
+                    # Modify the MPC call to include correct parameter order
+                    current_control, pred, _ = cost_fun_mimo(
+                        current_states=states[t - 1].astype(np.float32),
+                        prev_controls=current_control.astype(np.float32),
+                        references=current_ref.astype(np.float32),
+                        bounds=bounds,
+                        model=model,
+                        W=W.astype(np.float32),
+                        R=R.astype(np.float32),
+                        lambda_tracking=.95,
+                        lambda_terminal=0.001,
+                        lambda_integral=1.51,
+                        w_state_con=1e6,
+                        w_control_con=1e6,
+                        s=1e-3,
+                        horizon=150,  # Explicitly add horizon parameter
+                        dt=dt_mpc,
+                        max_iter=15  # Now correctly assigned
+                    )
+                    
+                    next_mpc_step += mpc_interval
+                except Exception as e:
+                    print(f"MPC failure at {current_time:.1f}s: {str(e)}")
+                    current_control = np.clip(current_control,
+                                              [v[0] for v in bounds['control'].values()],
+                                              [v[1] for v in bounds['control'].values()]).astype(np.float32)
+
+            # ... [rest of the code remains unchanged]
 
         # Apply control and simulate
         controls[t] = current_control

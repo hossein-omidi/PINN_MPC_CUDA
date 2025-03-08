@@ -1,121 +1,140 @@
 import torch
 import numpy as np
+from scipy.optimize import minimize
 
+class MPCSolver:
+    def __init__(self, model, bounds, params):
+        self.model = model
+        self.bounds = bounds
+        self.params = params
+        self.prev_solution = None
+        self.integral_error = np.zeros(3, dtype=np.float32)
+        
+        # Initialize control bounds
+        self.control_lb = np.array([bounds['control'][k][0] for k in ['fa_dot','fw_dot','u3']], 
+                                  dtype=np.float32)
+        self.control_ub = np.array([bounds['control'][k][1] for k in ['fa_dot','fw_dot','u3']], 
+                                  dtype=np.float32)
+        self.state_bounds = np.array([[bounds['state'][k][0], bounds['state'][k][1]] 
+                                    for k in ['Tt','wt','Ts']], dtype=np.float32)
+
+    def solve(self, current_states, prev_controls, references):
+        print("\nStarting MPC optimization...")
+        print(f"Current states: {current_states}")
+        print(f"Previous controls: {prev_controls}")
+        print(f"References: {references}")
+        
+        # Warm-start initialization with momentum
+        if self.prev_solution is not None:
+            controls_sequence = 0.7 * np.roll(self.prev_solution, -1, axis=0) + \
+                              0.3 * np.tile(prev_controls, (self.params['horizon'], 1))
+            controls_sequence[-1] = controls_sequence[-2]
+        else:
+            controls_sequence = np.tile(prev_controls, (self.params['horizon'], 1))
+        
+        print(f"Initial control sequence: {controls_sequence}")
+        
+        # Optimization using L-BFGS-B with bounds
+        print("\nRunning optimization...")
+        result = minimize(
+            self._objective,
+            controls_sequence.flatten(),
+            args=(current_states, references),
+            method='L-BFGS-B',
+            jac=True,
+            bounds=[(lb, ub) for lb, ub in zip(
+                np.tile(self.control_lb, self.params['horizon']),
+                np.tile(self.control_ub, self.params['horizon'])
+            )],
+            options={
+                'maxiter': self.params['max_iter'],
+                'ftol': 1e-6,
+                'disp': False
+            }
+        )
+        
+        self.prev_solution = result.x.reshape(self.params['horizon'], 3)
+        print("\nOptimization completed.")
+        print(f"Optimized control sequence: {self.prev_solution}")
+        
+        return result.x[:3], None, 0
+
+    def _objective(self, u_flat, current_states, references):
+        device = next(self.model.parameters()).device
+        u = u_flat.reshape(self.params['horizon'], 3).astype(np.float32)
+        state = torch.tensor(current_states, dtype=torch.float32, device=device)
+        total_cost = 0.0
+        grad = np.zeros_like(u)
+        
+        print(f"\nCalculating objective function for control sequence: {u}")
+        
+        for t in range(self.params['horizon']):
+            print(f"\nStep {t + 1}/{self.params['horizon']}")
+            
+            # Neural network prediction
+            control_tensor = torch.tensor(u[t], device=device, dtype=torch.float32)
+            nn_input = torch.cat([state, control_tensor])
+            nn_input.requires_grad = True
+            pred = self.model(nn_input.unsqueeze(0)).squeeze()
+            
+            print(f"Predicted next state: {pred.detach().cpu().numpy()}")
+            
+            # Calculate gradients using automatic differentiation
+            jac = torch.autograd.functional.jacobian(
+                lambda x: self.model(x.unsqueeze(0)), 
+                nn_input
+            )[0, :, 3:].detach().cpu().numpy().astype(np.float32)
+            
+            # State predictions
+            next_state = pred.detach().cpu().numpy().astype(np.float32)
+            
+            # Tracking calculations
+            tracking_error = next_state - references
+            self.integral_error += tracking_error * self.params['dt']
+            
+            print(f"Tracking error: {tracking_error}")
+            
+            # Cost components
+            cost_track = self.params['lambda_tracking'] * np.dot(tracking_error, self.params['W'] @ tracking_error)
+            cost_control = np.dot(u[t], self.params['R'] @ u[t])
+            cost_terminal = self.params['lambda_terminal'] * np.dot(tracking_error, tracking_error) if t == self.params['horizon']-1 else 0
+            
+            print(f"Cost components - Tracking: {cost_track}, Control: {cost_control}, Terminal: {cost_terminal}")
+            
+            # Gradient calculations
+            grad_track = 2 * self.params['lambda_tracking'] * (jac.T @ (self.params['W'] @ tracking_error))
+            grad_control = 2 * (self.params['R'] @ u[t])
+            
+            total_cost += cost_track + cost_control + cost_terminal
+            grad[t] = grad_track + grad_control
+            
+            print(f"Gradient for step {t + 1}: {grad[t]}")
+            
+            state = torch.tensor(next_state, dtype=torch.float32, device=device)
+        
+        print(f"\nTotal cost for control sequence: {total_cost}")
+        return total_cost.astype(np.float64), grad.flatten().astype(np.float64)
 
 def cost_fun_mimo(current_states, prev_controls, references, bounds, model,
-                  W=np.diag([1000, 1000, 100]),  # State tracking weights (Tt, wt, Ts)
-                  R=np.diag([0.01, 0.01, 0.1]),  # Control effort weights
-                  lambda_tracking=100,  # Tracking weight
-                  lambda_terminal=0.1,  # Terminal cost weight
-                  lambda_integral=50,  # Integral cost weight
-                  lambda_smooth=0.01,  # Control smoothness weight
-                  w_state_con=1e6,  # State constraint weight
-                  w_control_con=1e6,  # Control constraint weight
-                  s=1e-4,  # Step size
-                  horizon=10,  # Prediction horizon steps
-                  dt=0.05,  # MPC update interval
-                  max_iter=200):  # Optimization iterations
-
-    device = next(model.parameters()).device
-    control_names = ['fa_dot', 'fw_dot', 'u3']
-    state_names = ['Tt', 'wt', 'Ts']
-
-    # Initialize control sequence
-    controls_sequence = np.tile(prev_controls, (horizon, 1))
-    best_controls = controls_sequence.copy()
-    best_cost = float('inf')
-
-    # Integral error for all states
-    if not hasattr(cost_fun_mimo, "integral_error"):
-        cost_fun_mimo.integral_error = np.zeros(3)  # [Tt, wt, Ts]
-
-    # Extract bounds
-    control_lb = np.array([bounds['control'][k][0] for k in control_names])
-    control_ub = np.array([bounds['control'][k][1] for k in control_names])
-    state_lb = np.array([bounds['state'][k][0] for k in state_names])
-    state_ub = np.array([bounds['state'][k][1] for k in state_names])
-
-    for _ in range(max_iter):
-        total_cost = 0
-        grad_total = np.zeros((horizon, 3))  # Gradient for all controls
-        hessian_total = np.zeros((horizon * 3, horizon * 3))  # Hessian matrix
-
-        # State sequence prediction
-        state_sequence = [current_states.copy()]
-        for t in range(horizon):
-            # Predict next state
-            nn_input = np.concatenate([state_sequence[-1], controls_sequence[t]])
-            x = torch.FloatTensor(nn_input).to(device).unsqueeze(0)
-            x.requires_grad = True
-            y_pred = model(x)
-            next_state = y_pred.detach().cpu().numpy().flatten()
-            state_sequence.append(next_state)
-
-            # Compute Jacobian [3x3] for all states and controls
-            jac = []
-            for i in range(3):
-                grad_output = torch.zeros_like(y_pred)
-                grad_output[:, i] = 1
-                jac_i = torch.autograd.grad(y_pred, x, grad_outputs=grad_output,
-                                            retain_graph=True, create_graph=False)[0][:, 3:]
-                jac.append(jac_i.squeeze(0).cpu().numpy())
-            jac = np.array(jac)  # [3, 3]
-
-            # Calculate errors for all states
-            tracking_error = next_state - references  # [Tt, wt, Ts]
-            cost_fun_mimo.integral_error += tracking_error * dt  # Update integral error
-
-            # Cost components
-            # Tracking cost with weight matrix W
-            weighted_error = W @ tracking_error
-            integral_cost = lambda_integral * (W @ cost_fun_mimo.integral_error)
-            tracking_cost = weighted_error @ weighted_error + integral_cost @ integral_cost
-
-            # Control effort cost
-            control_cost = controls_sequence[t] @ R @ controls_sequence[t]
-
-            # Constraint violation costs
-            state_viol = np.maximum(state_lb - next_state, 0) + np.maximum(next_state - state_ub, 0)
-            control_viol = ((controls_sequence[t] < control_lb) | (controls_sequence[t] > control_ub)).astype(float)
-            constraint_cost = w_state_con * (state_viol @ state_viol) + w_control_con * (control_viol @ control_viol)
-
-            # Gradient components
-            grad_tracking = 2 * jac.T @ W @ (tracking_error + lambda_integral * cost_fun_mimo.integral_error)
-            grad_control = 2 * R @ controls_sequence[t]
-            grad_smooth = 2 * lambda_smooth * (controls_sequence[t] -
-                                               (controls_sequence[t - 1] if t > 0 else prev_controls))
-            grad_constraints = 2 * (w_state_con * state_viol + w_control_con * control_viol)
-
-            total_grad = grad_tracking + grad_control + grad_smooth + grad_constraints
-            grad_total[t] = total_grad
-
-            # Hessian components
-            hess_tracking = 2 * jac.T @ W @ jac
-            hess_control = 2 * R
-            hess_smooth = 2 * lambda_smooth * np.eye(3)
-            hess_constraints = 2 * np.diag([w_state_con] * 3 + [w_control_con] * 3)[:3, :3]
-
-            hessian_total[t * 3:(t + 1) * 3, t * 3:(t + 1) * 3] = (hess_tracking + hess_control +
-                                                                   hess_smooth + hess_constraints)
-
-            # Total cost accumulation
-            total_cost += tracking_cost + control_cost + constraint_cost + lambda_terminal * (
-                        next_state @ W @ next_state)
-
-        # Optimization step
-        try:
-            du = -np.linalg.solve(hessian_total, grad_total.flatten())
-        except np.linalg.LinAlgError:
-            du = -np.linalg.pinv(hessian_total) @ grad_total.flatten()
-
-        # Update controls with step size
-        controls_sequence = controls_sequence + s * du.reshape(horizon, 3)
-        controls_sequence = np.clip(controls_sequence, control_lb, control_ub)
-
-        # Check for improvement
-        if total_cost < best_cost:
-            best_cost = total_cost
-            best_controls = controls_sequence.copy()
-
-    # Return first control input and predicted state
-    return best_controls[0], state_sequence[-1], 0
+                  W, R, lambda_tracking, lambda_terminal, lambda_integral,
+                  w_state_con, w_control_con, s, horizon, dt, max_iter):
+    
+    params = {
+        'W': W.astype(np.float32),
+        'R': R.astype(np.float32),
+        'lambda_tracking': np.float32(lambda_tracking),
+        'lambda_terminal': np.float32(lambda_terminal),
+        'horizon': horizon,
+        'dt': dt,
+        'max_iter': max_iter
+    }
+    
+    print("\nInitializing MPC solver...")
+    solver = MPCSolver(model, bounds, params)
+    print("MPC solver initialized.")
+    
+    return solver.solve(
+        current_states.astype(np.float32),
+        prev_controls.astype(np.float32),
+        references.astype(np.float32)
+    )
