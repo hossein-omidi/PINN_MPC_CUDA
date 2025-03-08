@@ -34,12 +34,12 @@ def generate_setpoint_mpc(t_now):
     if t_now < 500:
         Tt_ref = 23 + 1.5 * np.sin(0.05 * t_now)
         wt_ref = 8 + 1 * np.sin(0.025 * t_now)
-        Ts_ref = 18
+        Ts_ref = 15
     else:
         step_index = int((t_now - 500) // 200)
         Tt_ref = 23 + (step_index % 4) * 0.5
         wt_ref = 8 + (step_index % 4) * .5
-        Ts_ref = 18
+        Ts_ref = 15
     return np.array([Tt_ref, wt_ref, Ts_ref])
 
 
@@ -75,7 +75,7 @@ def run_mpc_simulation():
     # Timing parameters
     dt_rk4 = 0.1  # 100Hz simulation
     dt_mpc = 0.2  # 5Hz control updates
-    total_time = 200  # 10 minutes simulation
+    total_time = 30  # 10 minutes simulation
     n_steps = int(total_time / dt_rk4)
     mpc_interval = int(dt_mpc / dt_rk4)
 
