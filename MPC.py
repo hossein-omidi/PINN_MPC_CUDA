@@ -19,10 +19,6 @@ class MPCSolver:
                                     for k in ['Tt','wt','Ts']], dtype=np.float32)
 
     def solve(self, current_states, prev_controls, references):
-        print("\nStarting MPC optimization...")
-        print(f"Current states: {current_states}")
-        print(f"Previous controls: {prev_controls}")
-        print(f"References: {references}")
         
         # Warm-start initialization with momentum
         if self.prev_solution is not None:
@@ -32,10 +28,8 @@ class MPCSolver:
         else:
             controls_sequence = np.tile(prev_controls, (self.params['horizon'], 1))
         
-        print(f"Initial control sequence: {controls_sequence}")
         
         # Optimization using L-BFGS-B with bounds
-        print("\nRunning optimization...")
         result = minimize(
             self._objective,
             controls_sequence.flatten(),
@@ -53,10 +47,7 @@ class MPCSolver:
             }
         )
         
-        self.prev_solution = result.x.reshape(self.params['horizon'], 3)
-        print("\nOptimization completed.")
-        print(f"Optimized control sequence: {self.prev_solution}")
-        
+        self.prev_solution = result.x.reshape(self.params['horizon'], 3)        
         return result.x[:3], None, 0
 
     def _objective(self, u_flat, current_states, references):
@@ -65,20 +56,14 @@ class MPCSolver:
         state = torch.tensor(current_states, dtype=torch.float32, device=device)
         total_cost = 0.0
         grad = np.zeros_like(u)
-        
-        print(f"\nCalculating objective function for control sequence: {u}")
-        
-        for t in range(self.params['horizon']):
-            print(f"\nStep {t + 1}/{self.params['horizon']}")
-            
+                
+        for t in range(self.params['horizon']):            
             # Neural network prediction
             control_tensor = torch.tensor(u[t], device=device, dtype=torch.float32)
             nn_input = torch.cat([state, control_tensor])
             nn_input.requires_grad = True
             pred = self.model(nn_input.unsqueeze(0)).squeeze()
-            
-            print(f"Predicted next state: {pred.detach().cpu().numpy()}")
-            
+                        
             # Calculate gradients using automatic differentiation
             jac = torch.autograd.functional.jacobian(
                 lambda x: self.model(x.unsqueeze(0)), 
@@ -91,16 +76,12 @@ class MPCSolver:
             # Tracking calculations
             tracking_error = next_state - references
             self.integral_error += tracking_error * self.params['dt']
-            
-            print(f"Tracking error: {tracking_error}")
-            
+                        
             # Cost components
             cost_track = self.params['lambda_tracking'] * np.dot(tracking_error, self.params['W'] @ tracking_error)
             cost_control = np.dot(u[t], self.params['R'] @ u[t])
             cost_terminal = self.params['lambda_terminal'] * np.dot(tracking_error, tracking_error) if t == self.params['horizon']-1 else 0
-            
-            print(f"Cost components - Tracking: {cost_track}, Control: {cost_control}, Terminal: {cost_terminal}")
-            
+                        
             # Gradient calculations
             grad_track = 2 * self.params['lambda_tracking'] * (jac.T @ (self.params['W'] @ tracking_error))
             grad_control = 2 * (self.params['R'] @ u[t])
@@ -108,11 +89,9 @@ class MPCSolver:
             total_cost += cost_track + cost_control + cost_terminal
             grad[t] = grad_track + grad_control
             
-            print(f"Gradient for step {t + 1}: {grad[t]}")
             
             state = torch.tensor(next_state, dtype=torch.float32, device=device)
         
-        print(f"\nTotal cost for control sequence: {total_cost}")
         return total_cost.astype(np.float64), grad.flatten().astype(np.float64)
 
 def cost_fun_mimo(current_states, prev_controls, references, bounds, model,
@@ -129,9 +108,7 @@ def cost_fun_mimo(current_states, prev_controls, references, bounds, model,
         'max_iter': max_iter
     }
     
-    print("\nInitializing MPC solver...")
     solver = MPCSolver(model, bounds, params)
-    print("MPC solver initialized.")
     
     return solver.solve(
         current_states.astype(np.float32),

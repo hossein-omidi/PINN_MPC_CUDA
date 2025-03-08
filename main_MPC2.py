@@ -75,7 +75,7 @@ def run_mpc_simulation():
     # Timing parameters
     dt_rk4 = 0.1  # 100Hz simulation
     dt_mpc = 0.2  # 5Hz control updates
-    total_time = 250  # 10 minutes simulation
+    total_time = 150  # 10 minutes simulation
     n_steps = int(total_time / dt_rk4)
     mpc_interval = int(dt_mpc / dt_rk4)
 
@@ -145,7 +145,7 @@ def run_mpc_simulation():
                         w_state_con=1e6,
                         w_control_con=1e6,
                         s=1e-3,
-                        horizon=150,  # Explicitly add horizon parameter
+                        horizon=30,  # Explicitly add horizon parameter
                         dt=dt_mpc,
                         max_iter=15  # Now correctly assigned
                     )
