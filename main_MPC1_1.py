@@ -70,7 +70,7 @@ def run_mpc_simulation():
     # Timing parameters
     dt_rk4 = 0.01  # 100Hz simulation
     dt_mpc = 0.02  # 50Hz control updates
-    total_time = 30  # 30 seconds simulation
+    total_time = 30 # 30 seconds simulation
     n_steps = int(total_time / dt_rk4)
     mpc_interval = int(dt_mpc / dt_rk4)
 
@@ -87,7 +87,7 @@ def run_mpc_simulation():
         'control': {
             'fa_dot': (0.1, 5.0),
             'fw_dot': (0.0, 0.003),
-            'u3': (-1e-2, 1e-2)
+            'u3': (-10e-2, 10e-2)
         },
         'state': {
             'Tt': (16.0, 32.0),
@@ -97,9 +97,10 @@ def run_mpc_simulation():
     }
 
     # Weight matrices with enhanced tracking emphasis
-    W = np.diag([50, 50, 0.1])  # Prioritize Tt and wt over Ts
-    R = np.diag([1.0, 1.0, 1.0])  # Balanced control penalties
+    W = np.diag([200.0, 200.0, 50.0])  # Increased weights for Tt and wt
+    R = np.diag([2.0, 2.0, 2.0])       # Increased control penalties for minimal effort
 
+    # Initialize states and controls
     # Initialize states and controls
     current_state = np.array([23.0, 8.0, 18.0])  # Initial condition
     states = np.zeros((n_steps, 3))
@@ -107,7 +108,7 @@ def run_mpc_simulation():
     states[0] = current_state
     current_control = np.array([2.0, 0.001, 0.0])
 
-    # Main simulation loop
+# Main simulation loop
     next_mpc_step = mpc_interval
     for t in range(1, n_steps):
         current_time = t * dt_rk4
@@ -115,7 +116,6 @@ def run_mpc_simulation():
 
         if t >= next_mpc_step:
             try:
-                # MPC call with adjusted horizon and return handling
                 current_control, _, _ = cost_fun_mimo(
                     current_states=states[t - 1].astype(np.float32),
                     prev_controls=current_control.astype(np.float32),
@@ -124,15 +124,15 @@ def run_mpc_simulation():
                     model=model,
                     W=W.astype(np.float32),
                     R=R.astype(np.float32),
-                    lambda_tracking=2,
+                    lambda_tracking=2,  # Already suitable for tracking emphasis
                     lambda_terminal=0.001,
                     lambda_integral=10,
                     w_state_con=1e6,
                     w_control_con=1e6,
                     s=1e-3,
-                    horizon=15,  # Adjusted for efficiency
+                    horizon=15,
                     dt=dt_mpc,
-                    max_iter=230
+                    max_iter=300
                 )
                 next_mpc_step += mpc_interval
             except Exception as e:
@@ -140,7 +140,6 @@ def run_mpc_simulation():
                 current_control = np.clip(current_control,
                                           [v[0] for v in bounds['control'].values()],
                                           [v[1] for v in bounds['control'].values()]).astype(np.float32)
-
         # Apply control and simulate
         controls[t] = current_control
         states[t] = rk4_step(states[t - 1], controls[t], dt_rk4)

@@ -101,22 +101,22 @@ class EnhancedMPCSolver:
             cost_control = float(u_t @ R @ u_t)
             cost_smooth = 0.0
             if t > 0:
-                control_diff = u_t - torch.tensor(u[t-1], device=self.device)
-                cost_smooth = 0.5 * float(control_diff @ control_diff)
+                u_prev = torch.tensor(u[t-1], dtype=torch.float32, device=self.device)
+                control_diff = u_t - u_prev
+                cost_smooth = 5.0 * float((control_diff @ control_diff).item())  # Scaled by 10 * 0.5 = 5
             
             # Total step cost
             step_cost = (self.params['lambda_tracking'] * cost_track +
-                        self.params['lambda_con'] * cost_con +
-                        cost_control + cost_smooth)
+                         self.params['lambda_con'] * cost_con +
+                         cost_control + cost_smooth)
             total_cost += step_cost
             
             # Compute gradient
             step_cost_torch = (self.params['lambda_tracking'] * (tracking_error @ W @ tracking_error) +
-                              self.params['lambda_con'] * (state_viol @ S @ state_viol) +
-                              u_t @ R @ u_t)
+                               self.params['lambda_con'] * (state_viol @ S @ state_viol) +
+                               u_t @ R @ u_t)
             if t > 0:
-                step_cost_torch += 0.5 * ((u_t - torch.tensor(u[t-1], device=self.device)) @ 
-                                        (u_t - torch.tensor(u[t-1], device=self.device)))
+                step_cost_torch += 5.0 * (control_diff @ control_diff)  # Scaled smoothing term
             
             step_cost_torch.backward()
             grad[t] = u_t.grad.detach().cpu().numpy() if u_t.grad is not None else np.zeros(3)
@@ -136,35 +136,15 @@ def cost_fun_mimo(current_states, prev_controls, references, bounds, model,
                   w_state_con, w_control_con, s, horizon, dt, max_iter):
     """
     MPC cost function compatible with main_mpc.py.
-    
-    Args:
-        current_states: Current states [Tt, wt, Ts]
-        prev_controls: Previous controls [fa_dot, fw_dot, u3]
-        references: Desired setpoints [Tt_ref, wt_ref, Ts_ref]
-        bounds: Dictionary of state and control bounds
-        model: Trained PINN model
-        W, R: Weight matrices (unused, defined internally)
-        lambda_tracking, lambda_terminal, lambda_integral: Weight scalars (partially used)
-        w_state_con, w_control_con, s: Additional weights (unused, defined internally)
-        horizon: Prediction horizon
-        dt: Time step
-        max_iter: Maximum optimization iterations
-    
-    Returns:
-        control: Optimal control inputs [fa_dot, fw_dot, u3]
-        status: Optimization status
-        cost: Total cost
     """
-    # Define weights: prioritize Tt and wt over Ts
-    W = np.diag([150.0, 150.0, 50.0]).astype(np.float32)  # Tt, wt, Ts
-    R = np.diag([1.0, 1.0, 1.0]).astype(np.float32)       # fa_dot, fw_dot, u3
-    S = np.diag([1e6, 1e6, 2e6]).astype(np.float32)       # Strong penalties for state violations
+    # Use passed W and R; define S internally
+    S = np.diag([1e6, 1e6, 2e6]).astype(np.float32)  # Strong penalties for state violations
     
     params = {
         'W': W,
         'R': R,
         'S': S,
-        'lambda_tracking': np.float32(1.5),  # Emphasize tracking
+        'lambda_tracking': lambda_tracking,  # Use passed value
         'lambda_con': np.float32(30.0),      # Strong constraint enforcement
         'horizon': min(horizon, 15),         # Limit horizon for efficiency
         'dt': dt,
