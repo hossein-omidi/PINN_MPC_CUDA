@@ -67,8 +67,8 @@ def rk4_step(x, u, dt):
 
 def run_mpc_simulation():
     # Timing parameters
-    dt_rk4 = 0.05  # 100Hz simulation
-    dt_mpc = 0.1   # 50Hz control updates
+    dt_rk4 = 0.1  # 100Hz simulation
+    dt_mpc = 0.2   # 50Hz control updates
     total_time = 1  # 20 seconds simulation
     n_steps = int(total_time / dt_rk4)
     mpc_interval = int(dt_mpc / dt_rk4)
@@ -139,9 +139,9 @@ def run_mpc_simulation():
                     w_state_con=1e6,
                     w_control_con=1e6,
                     s=1e-3,
-                    horizon=30,
+                    horizon=3,
                     dt=dt_mpc,
-                    max_iter=700
+                    max_iter=20
                 )
                 next_mpc_step += mpc_interval
             except Exception as e:
