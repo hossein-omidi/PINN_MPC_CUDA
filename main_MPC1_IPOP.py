@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 import torch
 from model import get_model
-from MPC1_1 import cost_fun_mimo
+from MPC_IPOP import cost_fun_mimo
 from plotting import MPCplot
 import matplotlib
 
@@ -30,7 +30,7 @@ Q_dot0 = 20000  # W
 def generate_setpoint_mpc(t_now):
     """Dynamic reference generator for all three states"""
     if t_now < 500:
-        Tt_ref = 23 + 1.5 * np.sin(0.05 * t_now)
+        Tt_ref = 24 + 1 * np.sin(0.05 * t_now)
         wt_ref = 8 + 1 * np.sin(0.025 * t_now)
         Ts_ref = 15
     else:
@@ -68,9 +68,9 @@ def rk4_step(x, u, dt):
 
 def run_mpc_simulation():
     # Timing parameters
-    dt_rk4 = 0.01  # 100Hz simulation
-    dt_mpc = 0.02  # 50Hz control updates
-    total_time = 120  # 30 seconds simulation
+    dt_rk4 = 0.05  # 100Hz simulation
+    dt_mpc = 0.1  # 50Hz control updates
+    total_time = 20  # 30 seconds simulation
     n_steps = int(total_time / dt_rk4)
     mpc_interval = int(dt_mpc / dt_rk4)
 
@@ -92,13 +92,13 @@ def run_mpc_simulation():
         'state': {
             'Tt': (16.0, 32.0),
             'wt': (6.5, 9.5),
-            'Ts': (10.0, 26.0)
+            'Ts': (6.0, 26.0)
         }
     }
 
     # Weight matrices with enhanced tracking emphasis
-    W = np.diag([200.0, 200.0, 1])  # Increased weights for Tt and wt
-    R = np.diag([3, 3, 3])          # Increased control penalties for minimal effort
+    W = np.diag([350.0, 350.0, 0.5])  # Tt and wt tracking emphasized
+    R = np.diag([1.5, 4.0, 0.8])       # Control effort weights
 
     # Initialize states, controls, and references
     current_state = np.array([23.0, 8.0, 18.0])  # Initial condition
@@ -135,13 +135,13 @@ def run_mpc_simulation():
                     model=model,
                     W=W.astype(np.float32),
                     R=R.astype(np.float32),
-                    lambda_tracking=1,
+                    lambda_tracking=1.5,
                     lambda_terminal=0.1,
-                    lambda_integral=1.2,
+                    lambda_integral=.8,
                     w_state_con=1e6,
                     w_control_con=1e6,
                     s=1e-3,
-                    horizon=20,
+                    horizon=30,
                     dt=dt_mpc,
                     max_iter=700
                 )
