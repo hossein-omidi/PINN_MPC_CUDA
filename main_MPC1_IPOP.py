@@ -2,14 +2,14 @@ import numpy as np
 import pandas as pd
 import torch
 from model import get_model
-from MPC_IPOP import cost_fun_mimo
+from MPC_IPOP import cost_fun_mimo  # Note: Renamed file reference to MPC_IPOP.py
 from plotting import MPCplot
 import matplotlib
 
 matplotlib.use('TkAgg')
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-print(device)
+print(f"Device: {device}")
 
 # System parameters
 w0 = 8.2  # kg/kg, initial humidity ratio
@@ -45,7 +45,6 @@ def system_dynamics(t, x, u):
     Tt, wt, Ts = x
     fa_dot, fw_dot, u3 = u
 
-    # Differential equations
     dTt = (1 / (rho_a * Cpa * Vt)) * (Q_dot0 - hfg * M_dot0) + \
           ((fa_dot * hfg) / (1000 * Cpa * Vt)) * (wt - ws) - (fa_dot / Vt) * (Tt - Ts)
 
@@ -69,8 +68,8 @@ def rk4_step(x, u, dt):
 def run_mpc_simulation():
     # Timing parameters
     dt_rk4 = 0.05  # 100Hz simulation
-    dt_mpc = 0.1  # 50Hz control updates
-    total_time = 20  # 30 seconds simulation
+    dt_mpc = 0.1   # 50Hz control updates
+    total_time = 1  # 20 seconds simulation
     n_steps = int(total_time / dt_rk4)
     mpc_interval = int(dt_mpc / dt_rk4)
 
@@ -96,22 +95,21 @@ def run_mpc_simulation():
         }
     }
 
-    # Weight matrices with enhanced tracking emphasis
-    W = np.diag([350.0, 350.0, 0.5])  # Tt and wt tracking emphasized
-    R = np.diag([1.5, 4.0, 0.8])       # Control effort weights
+    W = np.diag([350.0, 350.0, 0.5]).astype(np.float32)  # Tracking weights
+    R = np.diag([1.5, 4.0, 0.8]).astype(np.float32)      # Control weights
 
-    # Initialize states, controls, and references
-    current_state = np.array([23.0, 8.0, 18.0])  # Initial condition
-    states = np.zeros((n_steps, 3))
-    controls = np.zeros((n_steps, 3))
-    references = np.zeros((n_steps, 3))  # To store setpoints
+    # Initialize states and controls
+    current_state = np.array([23.0, 8.0, 18.0], dtype=np.float32)
+    states = np.zeros((n_steps, 3), dtype=np.float32)
+    controls = np.zeros((n_steps, 3), dtype=np.float32)
+    references = np.zeros((n_steps, 3), dtype=np.float32)
     states[0] = current_state
-    current_control = np.array([2.0, 0.001, 0.0])
-    
-    # Initialize references and next_setpoint_time
-    current_ref = generate_setpoint_mpc(0.0)
+    current_control = np.array([2.0, 0.001, 0.0], dtype=np.float32)
+
+    # Initialize references
+    current_ref = generate_setpoint_mpc(0.0).astype(np.float32)
     references[0] = current_ref
-    next_setpoint_time = 10.0  # First update at 10 seconds
+    next_setpoint_time = 10.0
 
     # Main simulation loop
     next_mpc_step = mpc_interval
@@ -120,24 +118,24 @@ def run_mpc_simulation():
 
         # Update setpoint every 10 seconds
         if current_time >= next_setpoint_time:
-            current_ref = generate_setpoint_mpc(current_time)
+            current_ref = generate_setpoint_mpc(current_time).astype(np.float32)
             next_setpoint_time += 10.0
-        references[t] = current_ref  # Store the current reference
+        references[t] = current_ref
 
-        # MPC control update logic (unchanged)
+        # MPC control update
         if t >= next_mpc_step:
             try:
-                current_control, _, _ = cost_fun_mimo(
-                    current_states=states[t - 1].astype(np.float32),
-                    prev_controls=current_control.astype(np.float32),
-                    references=current_ref.astype(np.float32),
+                current_control, status, cost = cost_fun_mimo(
+                    current_states=states[t - 1],
+                    prev_controls=current_control,
+                    references=current_ref,
                     bounds=bounds,
                     model=model,
-                    W=W.astype(np.float32),
-                    R=R.astype(np.float32),
+                    W=W,
+                    R=R,
                     lambda_tracking=1.5,
                     lambda_terminal=0.1,
-                    lambda_integral=.8,
+                    lambda_integral=0.8,
                     w_state_con=1e6,
                     w_control_con=1e6,
                     s=1e-3,
@@ -148,10 +146,11 @@ def run_mpc_simulation():
                 next_mpc_step += mpc_interval
             except Exception as e:
                 print(f"MPC failure at {current_time:.1f}s: {str(e)}")
-                current_control = np.clip(current_control,
-                                          [v[0] for v in bounds['control'].values()],
-                                          [v[1] for v in bounds['control'].values()]).astype(np.float32)
-        # Apply control and simulate
+                current_control = np.clip(
+                    current_control,
+                    [v[0] for v in bounds['control'].values()],
+                    [v[1] for v in bounds['control'].values()]
+                ).astype(np.float32)
         controls[t] = current_control
         states[t] = rk4_step(states[t - 1], controls[t], dt_rk4)
 
@@ -162,7 +161,7 @@ def run_mpc_simulation():
                   f"wt: {states[t, 1]:.5f} (ref: {current_ref[1]:.5f}) | "
                   f"Ts: {states[t, 2]:.2f}C (ref: {current_ref[2]:.2f})")
 
-    # Compile results using stored references
+    # Compile results
     time_axis = np.arange(n_steps) * dt_rk4
     return pd.DataFrame({
         'Time': time_axis,
@@ -172,7 +171,7 @@ def run_mpc_simulation():
         'fa_dot': controls[:, 0],
         'fw_dot': controls[:, 1],
         'u3': controls[:, 2],
-        'Tt_ref': references[:, 0],  # Use stored references
+        'Tt_ref': references[:, 0],
         'wt_ref': references[:, 1],
         'Ts_ref': references[:, 2]
     })
