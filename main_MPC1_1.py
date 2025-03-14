@@ -29,12 +29,12 @@ Q_dot0 = 20000  # W
 
 def generate_setpoint_mpc(t_now):
     """Dynamic reference generator for all three states"""
-    if t_now < 500:
-        Tt_ref = 24 - 1 * np.sin(0.05 * t_now)
-        wt_ref = 8 + 1 * np.sin(0.025 * t_now)
+    if t_now < 200:
+        Tt_ref = 24 - .8 * np.sin(0.05 * t_now)
+        wt_ref = 8 + .8 * np.sin(0.025 * t_now)
         Ts_ref = 15
     else:
-        step_index = int((t_now - 500) // 200)
+        step_index = int((t_now - 200) // 200)
         Tt_ref = 24 + (step_index % 4) * 0.5
         wt_ref = 8 + (step_index % 4) * 0.5
         Ts_ref = 15
@@ -70,7 +70,7 @@ def run_mpc_simulation():
     # Timing parameters
     dt_rk4 = 0.1  # 100Hz simulation
     dt_mpc = 0.1  # 50Hz control updates
-    total_time = 50  # 5 seconds simulation
+    total_time = 400  # 5 seconds simulation
     n_steps = int(total_time / dt_rk4)
     mpc_interval = int(dt_mpc / dt_rk4)
 
@@ -108,9 +108,9 @@ def run_mpc_simulation():
         'lambda_terminal': np.float32(10),
         'lambda_integral': np.float32(100),
         'lambda_con': np.float32(1e6),
-        'horizon': 5,
+        'horizon': 20,
         'dt': dt_mpc,
-        'max_iter': 1130
+        'max_iter': 1400
     }
 
     # Initialize solver once
@@ -145,9 +145,9 @@ def run_mpc_simulation():
                     w_state_con=1e6,
                     w_control_con=1e6,  # Unused but kept for compatibility
                     s=S,  # Pass matrix directly
-                    horizon=5,
+                    horizon=20,
                     dt=dt_mpc,
-                    max_iter=1130,
+                    max_iter=1400,
                     solver=solver  # Persistent solver
                 )
                 next_mpc_step += mpc_interval
