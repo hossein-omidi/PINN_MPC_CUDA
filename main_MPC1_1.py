@@ -5,6 +5,7 @@ from model import get_model
 from MPC_merge import cost_fun_mimo,UnifiedMPCSolver
 from plotting import MPCplot
 import matplotlib
+import os  # Added for directory handling
 
 matplotlib.use('TkAgg')
 
@@ -28,15 +29,16 @@ M_dot0 = 0.000115  # kg/s
 Q_dot0 = 20000  # W
 
 def generate_setpoint_mpc(t_now):
-    """Dynamic reference generator for all three states"""
-    if t_now < 200:
-        Tt_ref = 24 - .8 * np.sin(0.05 * t_now)
-        wt_ref = 8 + .8 * np.sin(0.025 * t_now)
+    """Dynamic reference generator for all three states with random updates after 200s."""
+    if t_now < 300:
+        Tt_ref = 24 - 0.8 * np.sin(0.05 * t_now)
+        wt_ref = 8 + 0.8 * np.sin(0.025 * t_now)
         Ts_ref = 15
     else:
-        step_index = int((t_now - 200) // 50)
-        Tt_ref = 24 + (step_index % 4) * 0.5
-        wt_ref = 8 + (step_index % 4) * 0.5
+        step_index = int((t_now - 300) // 60)
+        np.random.seed(step_index)
+        Tt_ref = np.random.uniform(23.5, 25)
+        wt_ref = np.random.uniform(23.5, 25)
         Ts_ref = 15
     return np.array([Tt_ref, wt_ref, Ts_ref])
 
@@ -70,7 +72,7 @@ def run_mpc_simulation():
     # Timing parameters
     dt_rk4 = 0.01  # 100Hz simulation
     dt_mpc = 0.05  # 50Hz control updates
-    total_time = 4  # 5 seconds simulation
+    total_time = 600# 5 seconds simulation
     n_steps = int(total_time / dt_rk4)
     mpc_interval = int(dt_mpc / dt_rk4)
 
@@ -110,7 +112,7 @@ def run_mpc_simulation():
         'lambda_con': np.float32(1e6),
         'horizon': 20,
         'dt': dt_mpc,
-        'max_iter': 1400
+        'max_iter': 2000
     }
 
     # Initialize solver once
@@ -147,7 +149,7 @@ def run_mpc_simulation():
                     s=S,  # Pass matrix directly
                     horizon=20,
                     dt=dt_mpc,
-                    max_iter=1400,
+                    max_iter=2000,
                     solver=solver  # Persistent solver
                 )
                 next_mpc_step += mpc_interval
@@ -182,6 +184,16 @@ def run_mpc_simulation():
 
 if __name__ == "__main__":
     results = run_mpc_simulation()
+    
+    # Create results directory if it doesn't exist
+    os.makedirs("results", exist_ok=True)
+    
+    # Save results to CSV with timestamp
+    from datetime import datetime
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    results.to_csv(f"results/mpc_simulation_{timestamp}.csv", index=False)
+    
+    
     MPCplot(results[['Tt_actual', 'wt_actual', 'Ts_actual',
                      'fa_dot', 'fw_dot', 'u3',
                      'Tt_ref', 'wt_ref', 'Ts_ref']])
