@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 import torch
 from model import get_model
-from MPC_merge import cost_fun_mimo,UnifiedMPCSolver
+from MPC import cost_fun_mimo
 from plotting import MPCplot
 import matplotlib
 
@@ -69,8 +69,8 @@ def rk4_step(x, u, dt):
 def run_mpc_simulation():
     # Timing parameters
     dt_rk4 = 0.1  # 100Hz simulation
-    dt_mpc = 0.1  # 50Hz control updates
-    total_time = 50  # 5 seconds simulation
+    dt_mpc = 0.1 # 50Hz control updates
+    total_time = 3  # 30 seconds simulation
     n_steps = int(total_time / dt_rk4)
     mpc_interval = int(dt_mpc / dt_rk4)
 
@@ -96,32 +96,16 @@ def run_mpc_simulation():
         }
     }
 
-    W = np.diag([200, 200, 0.01]).astype(np.float32)
-    R = np.diag([.01, .001, .01]).astype(np.float32)
-    S = np.eye(3, dtype=np.float32) * 1e3  # Convert scalar s to matrix
-
-    params = {
-        'W': W,
-        'R': R,
-        'S': S,
-        'lambda_tracking': np.float32(1000),
-        'lambda_terminal': np.float32(10),
-        'lambda_integral': np.float32(100),
-        'lambda_con': np.float32(1e6),
-        'horizon': 5,
-        'dt': dt_mpc,
-        'max_iter': 1130
-    }
-
-    # Initialize solver once
-    solver = UnifiedMPCSolver(model, bounds, params)
+    # Weight matrices with enhanced tracking emphasis
+    W = np.diag([200, 200, 0.01])  # Prioritize Tt and wt over Ts
+    R = np.diag([.1, 5, .1])  # Balanced control penalties
 
     # Initialize states and controls
-    current_state = np.array([24.0, 8.0, 18.0], dtype=np.float32)
-    states = np.zeros((n_steps, 3), dtype=np.float32)
-    controls = np.zeros((n_steps, 3), dtype=np.float32)
+    current_state = np.array([24.0, 8.0, 18.0])  # Initial condition
+    states = np.zeros((n_steps, 3))
+    controls = np.zeros((n_steps, 3))
     states[0] = current_state
-    current_control = np.array([2.0, 0.001, 0.002], dtype=np.float32)
+    current_control = np.array([2.0, 0.001, 0.002])
 
     # Main simulation loop
     next_mpc_step = mpc_interval
@@ -131,24 +115,24 @@ def run_mpc_simulation():
 
         if t >= next_mpc_step:
             try:
-                current_control, status, cost = cost_fun_mimo(
-                    current_states=states[t - 1],
-                    prev_controls=current_control,
-                    references=current_ref,
+                # MPC call with adjusted horizon and return handling
+                current_control, _, _ = cost_fun_mimo(
+                    current_states=states[t - 1].astype(np.float32),
+                    prev_controls=current_control.astype(np.float32),
+                    references=current_ref.astype(np.float32),
                     bounds=bounds,
                     model=model,
-                    W=W,
-                    R=R,
-                    lambda_tracking=1000,
-                    lambda_terminal=10,
-                    lambda_integral=100,
+                    W=W.astype(np.float32),
+                    R=R.astype(np.float32),
+                    lambda_tracking=.99,
+                    lambda_terminal=0.3,
+                    lambda_integral=1,
                     w_state_con=1e6,
-                    w_control_con=1e6,  # Unused but kept for compatibility
-                    s=S,  # Pass matrix directly
-                    horizon=5,
+                    w_control_con=1e6,
+                    s=1e-3,
+                    horizon=5,  # Adjusted for efficiency
                     dt=dt_mpc,
-                    max_iter=1130,
-                    solver=solver  # Persistent solver
+                    max_iter=730
                 )
                 next_mpc_step += mpc_interval
             except Exception as e:
@@ -157,15 +141,18 @@ def run_mpc_simulation():
                                           [v[0] for v in bounds['control'].values()],
                                           [v[1] for v in bounds['control'].values()]).astype(np.float32)
 
+        # Apply control and simulate
         controls[t] = current_control
         states[t] = rk4_step(states[t - 1], controls[t], dt_rk4)
 
-        if t % 10 == 0:  # Adjusted for shorter simulation
+        # Monitoring
+        if t % 100 == 0:
             print(f"Time: {current_time:.1f}s | "
                   f"Tt: {states[t, 0]:.2f}C (ref: {current_ref[0]:.2f}) | "
                   f"wt: {states[t, 1]:.5f} (ref: {current_ref[1]:.5f}) | "
                   f"Ts: {states[t, 2]:.2f}C (ref: {current_ref[2]:.2f})")
 
+    # Compile results
     time_axis = np.arange(n_steps) * dt_rk4
     return pd.DataFrame({
         'Time': time_axis,
