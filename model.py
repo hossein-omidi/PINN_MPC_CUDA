@@ -81,13 +81,30 @@ class LSTMModel(nn.Module):
         out = lstm_out[:, -1, :] + res
 
         return self.fc(out)  # Output shape: (batch_size, output_dim)
+    
+    
+class RNNModel(nn.Module):
+    def __init__(self, input_dim, hidden_dim, layer_dim, output_dim):
+        super().__init__()
+        self.rnn = nn.RNN(input_dim, hidden_dim, layer_dim, batch_first=True)
+        self.residual = nn.Linear(input_dim, hidden_dim)
+        self.fc = nn.Linear(hidden_dim, output_dim)
+
+    def forward(self, x):
+        if x.dim() == 2:
+            x = x.unsqueeze(1)
+        rnn_out, _ = self.rnn(x)
+        res = self.residual(x[:, -1, :])
+        out = rnn_out[:, -1, :] + res
+        return self.fc(out)
 
 
 # Update get_model function
 def get_model(model, model_params):
     models = {
         "ann": NeuralNetwork,
-        "lstm": LSTMModel  # Add this line
+        "lstm": LSTMModel,
+        "rnn": RNNModel
     }
     return models.get(model.lower())(**model_params)
 

@@ -2,9 +2,10 @@ import numpy as np
 import pandas as pd
 import torch
 from model import get_model
-from MPC1_1 import cost_fun_mimo
+from MPC import cost_fun_mimo,UnifiedMPCSolver
 from plotting import MPCplot
 import matplotlib
+import os  # Added for directory handling
 
 matplotlib.use('TkAgg')
 
@@ -28,15 +29,16 @@ M_dot0 = 0.000115  # kg/s
 Q_dot0 = 20000  # W
 
 def generate_setpoint_mpc(t_now):
-    """Dynamic reference generator for all three states"""
-    if t_now < 500:
-        Tt_ref = 23 + 1.5 * np.sin(0.05 * t_now)
-        wt_ref = 8 + 1 * np.sin(0.025 * t_now)
+    """Dynamic reference generator for all three states with random updates after 200s."""
+    if t_now < 300:
+        Tt_ref = 24 - 0.8 * np.sin(0.04 * t_now)
+        wt_ref = 8 + 0.8 * np.sin(0.025 * t_now)
         Ts_ref = 15
     else:
-        step_index = int((t_now - 500) // 200)
-        Tt_ref = 23 + (step_index % 4) * 0.5
-        wt_ref = 8 + (step_index % 4) * 0.5
+        step_index = int((t_now - 300) // 60)
+        np.random.seed(step_index)
+        Tt_ref = np.random.uniform(23.5, 25)
+        wt_ref = np.random.uniform(8, 9)
         Ts_ref = 15
     return np.array([Tt_ref, wt_ref, Ts_ref])
 
@@ -69,8 +71,8 @@ def rk4_step(x, u, dt):
 def run_mpc_simulation():
     # Timing parameters
     dt_rk4 = 0.01  # 100Hz simulation
-    dt_mpc = 0.02  # 50Hz control updates
-    total_time = 30  # 30 seconds simulation
+    dt_mpc = 0.05  # 50Hz control updates
+    total_time = 600# 5 seconds simulation
     n_steps = int(total_time / dt_rk4)
     mpc_interval = int(dt_mpc / dt_rk4)
 
@@ -87,25 +89,41 @@ def run_mpc_simulation():
         'control': {
             'fa_dot': (0.1, 5.0),
             'fw_dot': (0.0, 0.003),
-            'u3': (-1e-2, 1e-2)
+            'u3': (-5e-2, 5e-2)
         },
         'state': {
             'Tt': (16.0, 32.0),
             'wt': (6.5, 9.5),
-            'Ts': (10.0, 26.0)
+            'Ts': (10.0, 42.0)
         }
     }
 
-    # Weight matrices with enhanced tracking emphasis
-    W = np.diag([50, 50, 0.1])  # Prioritize Tt and wt over Ts
-    R = np.diag([1.0, 1.0, 1.0])  # Balanced control penalties
+    W = np.diag([200, 200, 0.01]).astype(np.float32)
+    R = np.diag([.01, .001, .01]).astype(np.float32)
+    S = np.eye(3, dtype=np.float32) * 1e3  # Convert scalar s to matrix
+
+    params = {
+        'W': W,
+        'R': R,
+        'S': S,
+        'lambda_tracking': np.float32(1000),
+        'lambda_terminal': np.float32(10),
+        'lambda_integral': np.float32(100),
+        'lambda_con': np.float32(1e6),
+        'horizon': 20,
+        'dt': dt_mpc,
+        'max_iter': 2000
+    }
+
+    # Initialize solver once
+    solver = UnifiedMPCSolver(model, bounds, params)
 
     # Initialize states and controls
-    current_state = np.array([23.0, 8.0, 18.0])  # Initial condition
-    states = np.zeros((n_steps, 3))
-    controls = np.zeros((n_steps, 3))
+    current_state = np.array([24.0, 8.0, 18.0], dtype=np.float32)
+    states = np.zeros((n_steps, 3), dtype=np.float32)
+    controls = np.zeros((n_steps, 3), dtype=np.float32)
     states[0] = current_state
-    current_control = np.array([2.0, 0.001, 0.0])
+    current_control = np.array([2.0, 0.001, 0.002], dtype=np.float32)
 
     # Main simulation loop
     next_mpc_step = mpc_interval
@@ -115,24 +133,24 @@ def run_mpc_simulation():
 
         if t >= next_mpc_step:
             try:
-                # MPC call with adjusted horizon and return handling
-                current_control, _, _ = cost_fun_mimo(
-                    current_states=states[t - 1].astype(np.float32),
-                    prev_controls=current_control.astype(np.float32),
-                    references=current_ref.astype(np.float32),
+                current_control, status, cost = cost_fun_mimo(
+                    current_states=states[t - 1],
+                    prev_controls=current_control,
+                    references=current_ref,
                     bounds=bounds,
                     model=model,
-                    W=W.astype(np.float32),
-                    R=R.astype(np.float32),
-                    lambda_tracking=2,
-                    lambda_terminal=0.001,
-                    lambda_integral=10,
+                    W=W,
+                    R=R,
+                    lambda_tracking=1000,
+                    lambda_terminal=10,
+                    lambda_integral=100,
                     w_state_con=1e6,
-                    w_control_con=1e6,
-                    s=1e-3,
-                    horizon=15,  # Adjusted for efficiency
+                    w_control_con=1e6,  # Unused but kept for compatibility
+                    s=S,  # Pass matrix directly
+                    horizon=20,
                     dt=dt_mpc,
-                    max_iter=230
+                    max_iter=2000,
+                    solver=solver  # Persistent solver
                 )
                 next_mpc_step += mpc_interval
             except Exception as e:
@@ -141,18 +159,15 @@ def run_mpc_simulation():
                                           [v[0] for v in bounds['control'].values()],
                                           [v[1] for v in bounds['control'].values()]).astype(np.float32)
 
-        # Apply control and simulate
         controls[t] = current_control
         states[t] = rk4_step(states[t - 1], controls[t], dt_rk4)
 
-        # Monitoring
-        if t % 100 == 0:
+        if t % 10 == 0:  # Adjusted for shorter simulation
             print(f"Time: {current_time:.1f}s | "
                   f"Tt: {states[t, 0]:.2f}C (ref: {current_ref[0]:.2f}) | "
                   f"wt: {states[t, 1]:.5f} (ref: {current_ref[1]:.5f}) | "
                   f"Ts: {states[t, 2]:.2f}C (ref: {current_ref[2]:.2f})")
 
-    # Compile results
     time_axis = np.arange(n_steps) * dt_rk4
     return pd.DataFrame({
         'Time': time_axis,
@@ -169,6 +184,16 @@ def run_mpc_simulation():
 
 if __name__ == "__main__":
     results = run_mpc_simulation()
+    
+    # Create results directory if it doesn't exist
+    os.makedirs("results", exist_ok=True)
+    
+    # Save results to CSV with timestamp
+    from datetime import datetime
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    results.to_csv(f"results/mpc_simulation_{timestamp}.csv", index=False)
+    
+    
     MPCplot(results[['Tt_actual', 'wt_actual', 'Ts_actual',
                      'fa_dot', 'fw_dot', 'u3',
                      'Tt_ref', 'wt_ref', 'Ts_ref']])

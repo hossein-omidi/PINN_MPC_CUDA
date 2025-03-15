@@ -88,11 +88,11 @@ def run_open_loop_simulation():
 
 # Updated compare_with_PINN function with sine wave control inputs
 def compare_with_PINN(results):
-    model = get_model("lstm", {
+    model = get_model("ann", {
         'input_dim': 6, 'hidden_dim': 256,
-        'layer_dim': 12, 'output_dim': 3
+        'layer_dim': 6, 'output_dim': 3
     })
-    model.load_state_dict(torch.load("PINN_STZ_colab.pth", map_location=torch.device('cpu'), weights_only=True))
+    model.load_state_dict(torch.load("PINN_STZ_colab_ann.pth", map_location=torch.device('cpu'), weights_only=True))
     model.to(device)
     model.eval()
 
