@@ -31,7 +31,7 @@ Q_dot0 = 20000  # W
 def generate_setpoint_mpc(t_now):
     """Dynamic reference generator for all three states with random updates after 200s."""
     if t_now < 300:
-        Tt_ref = 24 - 0.8 * np.sin(0.05 * t_now)
+        Tt_ref = 24 - 0.8 * np.sin(0.04 * t_now)
         wt_ref = 8 + 0.8 * np.sin(0.025 * t_now)
         Ts_ref = 15
     else:
