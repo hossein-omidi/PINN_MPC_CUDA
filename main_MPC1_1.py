@@ -38,7 +38,7 @@ def generate_setpoint_mpc(t_now):
         step_index = int((t_now - 300) // 60)
         np.random.seed(step_index)
         Tt_ref = np.random.uniform(23.5, 25)
-        wt_ref = np.random.uniform(23.5, 25)
+        wt_ref = np.random.uniform(8, 9)
         Ts_ref = 15
     return np.array([Tt_ref, wt_ref, Ts_ref])
 
