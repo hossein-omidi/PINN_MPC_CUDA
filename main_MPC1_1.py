@@ -29,16 +29,19 @@ M_dot0 = 0.000115  # kg/s
 Q_dot0 = 20000  # W
 
 def generate_setpoint_mpc(t_now):
-    """Dynamic reference generator for all three states with random updates after 200s."""
-    if t_now < 300:
+    """Dynamic reference generator for all three states with specific updates after 300s."""
+    if t_now < 500:
         Tt_ref = 24 - 0.8 * np.sin(0.04 * t_now)
         wt_ref = 8 + 0.8 * np.sin(0.025 * t_now)
         Ts_ref = 15
     else:
-        step_index = int((t_now - 300) // 60)
-        np.random.seed(step_index)
-        Tt_ref = np.random.uniform(23.5, 25)
-        wt_ref = np.random.uniform(8, 9)
+        # Define specific values within the intervals [23.5, 25] for Tt and [8, 9] for wt
+        Tt_values = [23.5, 24, 25, 24.5]
+        wt_values = [8.5, 8.3, 8, 8.7]
+        step_index = int((t_now - 300) // 100)
+        index = step_index % 4
+        Tt_ref = Tt_values[index]
+        wt_ref = wt_values[index]
         Ts_ref = 15
     return np.array([Tt_ref, wt_ref, Ts_ref])
 
@@ -46,12 +49,18 @@ def system_dynamics(t, x, u):
     """True system dynamics for RK4 simulation"""
     Tt, wt, Ts = x
     fa_dot, fw_dot, u3 = u
+    
+    
+    t = 0 if t is None else t
+    
+    M_dot0_unc = M_dot0 * (1 + 0.2 * np.sin(0.2 * t))
+    Q_dot0_unc = Q_dot0 * (1 - 0.2 * np.sin(0.08 * t))
 
     # Differential equations
-    dTt = (1 / (rho_a * Cpa * Vt)) * (Q_dot0 - hfg * M_dot0) + \
+    dTt = (1 / (rho_a * Cpa * Vt)) * (Q_dot0_unc - hfg * M_dot0_unc) + \
           ((fa_dot * hfg) / (1000 * Cpa * Vt)) * (wt - ws) - (fa_dot / Vt) * (Tt - Ts)
 
-    dwt = 1000 * (M_dot0 / (rho_a * Vt)) - (fa_dot / Vt) * (wt - ws) + u3
+    dwt = 1000 * (M_dot0_unc / (rho_a * Vt)) - (fa_dot / Vt) * (wt - ws) + u3
 
     dTs = (fa_dot / Vc) * (Tt - Ts) + \
           (0.25 * fa_dot / Vc) * (T0 - Tt) - \
@@ -70,9 +79,9 @@ def rk4_step(x, u, dt):
 
 def run_mpc_simulation():
     # Timing parameters
-    dt_rk4 = 0.01  # 100Hz simulation
-    dt_mpc = 0.05  # 50Hz control updates
-    total_time = 600# 5 seconds simulation
+    dt_rk4 = 0.1  # 100Hz simulation
+    dt_mpc = 0.2  # 50Hz control updates
+    total_time = 30# 5 seconds simulation
     n_steps = int(total_time / dt_rk4)
     mpc_interval = int(dt_mpc / dt_rk4)
 
