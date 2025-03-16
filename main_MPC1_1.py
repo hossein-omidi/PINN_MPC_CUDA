@@ -54,7 +54,7 @@ def system_dynamics(t, x, u):
     t = 0 if t is None else t
     
     M_dot0_unc = M_dot0 * (1 + 0.2 * np.sin(0.2 * t))
-    Q_dot0_unc = Q_dot0 * (1 - 0.2 * np.sin(0.08 * t))
+    Q_dot0_unc = Q_dot0 * (1 + 0.2 * np.sin(0.08 * t))
 
     # Differential equations
     dTt = (1 / (rho_a * Cpa * Vt)) * (Q_dot0_unc - hfg * M_dot0_unc) + \
@@ -81,7 +81,7 @@ def run_mpc_simulation():
     # Timing parameters
     dt_rk4 = 0.1  # 100Hz simulation
     dt_mpc = 0.2  # 50Hz control updates
-    total_time = 30# 5 seconds simulation
+    total_time = 1000# 5 seconds simulation
     n_steps = int(total_time / dt_rk4)
     mpc_interval = int(dt_mpc / dt_rk4)
 
@@ -121,7 +121,7 @@ def run_mpc_simulation():
         'lambda_con': np.float32(1e6),
         'horizon': 20,
         'dt': dt_mpc,
-        'max_iter': 2000
+        'max_iter': 5000
     }
 
     # Initialize solver once
