@@ -30,12 +30,12 @@ Q_dot0 = 20000  # W
 
 def generate_setpoint_mpc(t_now):
     """Dynamic reference generator for all three states with random updates after 200s."""
-    if t_now < 300:
+    if t_now < 1:
         Tt_ref = 24 - 0.8 * np.sin(0.04 * t_now)
         wt_ref = 8 + 0.8 * np.sin(0.025 * t_now)
         Ts_ref = 15
     else:
-        step_index = int((t_now - 300) // 60)
+        step_index = int((t_now - 1) // 60)
         np.random.seed(step_index)
         Tt_ref = np.random.uniform(23.5, 25)
         wt_ref = np.random.uniform(8, 9)
@@ -72,16 +72,16 @@ def run_mpc_simulation():
     # Timing parameters
     dt_rk4 = 0.01  # 100Hz simulation
     dt_mpc = 0.05  # 50Hz control updates
-    total_time = 600# 5 seconds simulation
+    total_time = 50# 5 seconds simulation
     n_steps = int(total_time / dt_rk4)
     mpc_interval = int(dt_mpc / dt_rk4)
 
     # Initialize system
-    model = get_model("lstm", {
+    model = get_model("rnn", {
         'input_dim': 6, 'hidden_dim': 256,
-        'layer_dim': 5, 'output_dim': 3
+        'layer_dim': 6, 'output_dim': 3
     })
-    model.load_state_dict(torch.load("PINN_STZ_colab2.pth", map_location=device))
+    model.load_state_dict(torch.load("PINN_STZ_rnn2.pth", map_location=device))
     model.eval()
 
     # Configure bounds and weights
@@ -112,7 +112,7 @@ def run_mpc_simulation():
         'lambda_con': np.float32(1e6),
         'horizon': 20,
         'dt': dt_mpc,
-        'max_iter': 2000
+        'max_iter': 5000
     }
 
     # Initialize solver once
@@ -149,7 +149,7 @@ def run_mpc_simulation():
                     s=S,  # Pass matrix directly
                     horizon=20,
                     dt=dt_mpc,
-                    max_iter=2000,
+                    max_iter=5000,
                     solver=solver  # Persistent solver
                 )
                 next_mpc_step += mpc_interval

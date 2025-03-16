@@ -57,7 +57,7 @@ y_test = torch.FloatTensor(y_test).to(device)
 # Model define
 mo = 'PINN'
 hidden_dim = 256  # Increased capacity for MIMO system
-layer_dim = 5  # Deeper network
+layer_dim = 6  # Deeper network
 input_dim = 6      # 3 states + 3 inputs
 output_dim = 3     # 3 output states
 
@@ -76,10 +76,10 @@ weight_decay = 1e-6
 optimizer = optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
 opt = Optimization(model=model, mo=mo, optimizer=optimizer)
 # training
-n_epochs = 20000
+n_epochs = 25000
 opt.train(x_train, y_train, n_epochs)
 # Save model
-torch.save(model.state_dict(), mo + "_STZ_colab_ann.pth")
+torch.save(model.state_dict(), mo + "_STZ_rnn2.pth")
 # Testing Prediction
 yt = model(x_test)
 loss_test = torch.mean((yt - y_test) ** 2).detach()  # MSE test
