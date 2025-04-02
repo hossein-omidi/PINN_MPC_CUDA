@@ -63,7 +63,7 @@ def run_open_loop_simulation():
     dt_rk4 = 0.1
     simulation_time = 1500.0
     n_steps = int(simulation_time / dt_rk4)
-    initial_state = np.array([26, 8, 18])
+    initial_state = np.array([23, 8, 18])
     states = np.zeros((n_steps, 3), dtype=np.float32)
     states[0] = initial_state
     time = np.arange(n_steps) * dt_rk4
@@ -72,8 +72,9 @@ def run_open_loop_simulation():
     control_inputs = np.zeros((n_steps, 3))
     for t in range(n_steps):
         # Sine wave for fa_dot: amplitude 0.5, frequency 0.01 Hz, centered around 2.6
-        fa_dot_t = 2.6 + 0.5 * np.sin(2 * np.pi * 0.01 * time[t])
-        control_inputs[t] = [fa_dot_t, fw_dot, 0.001]
+        fa_dot_t = 2.6 + 1.5 * np.sin(2 * np.pi * 0.01 * time[t])
+        fw_dot_t = (0.9 / 1000)- (0.5 / 1000) * np.sin(2 * np.pi * 0.01 * time[t])
+        control_inputs[t] = [fa_dot_t, fw_dot_t, 0.001]
 
     # Simulation loop with time-varying control inputs
     for t in range(1, n_steps):
@@ -90,9 +91,9 @@ def run_open_loop_simulation():
 def compare_with_PINN(results):
     model = get_model("lstm", {
         'input_dim': 6, 'hidden_dim': 256,
-        'layer_dim': 12, 'output_dim': 3
+        'layer_dim':6, 'output_dim': 3
     })
-    model.load_state_dict(torch.load("PINN_STZ_colab.pth", map_location=torch.device('cpu'), weights_only=True))
+    model.load_state_dict(torch.load("PINN_STZ.pth", map_location=torch.device('cpu'), weights_only=True))
     model.to(device)
     model.eval()
 
@@ -103,8 +104,10 @@ def compare_with_PINN(results):
     # Generate sine wave control inputs matching the simulation
     control_inputs = np.zeros((len(inputs), 3))
     for t in range(len(inputs)):
-        fa_dot_t = 2.6 + 0.5 * np.sin(2 * np.pi * 0.01 * time[t])  # Same sine wave as in simulation
-        control_inputs[t] = [fa_dot_t, fw_dot, 0.0]  # fw_dot and u3 remain constant
+        fa_dot_t = 2.6 + 1.5 * np.sin(2 * np.pi * 0.01 * time[t])
+        fw_dot_t = (0.9 / 1000)- (0.5 / 1000) * np.sin(2 * np.pi * 0.01 * time[t])
+        control_inputs[t] = [fa_dot_t, fw_dot_t, 0.001]
+
 
     # Model Test Plot
     x_test = torch.FloatTensor(np.hstack((inputs, control_inputs))).to(device)
@@ -179,3 +182,12 @@ if __name__ == "__main__":
     plt.legend()
     plt.grid()
     plt.show()
+
+        # Save results to CSV file
+    results_with_pinn = results.iloc[:len(pinn_results)].copy()
+    results_with_pinn['PINN_Tt'] = pinn_results[:, 0]
+    results_with_pinn['PINN_wt'] = pinn_results[:, 1]
+    results_with_pinn['PINN_Ts'] = pinn_results[:, 2]
+    results_with_pinn.to_csv('simulation_results.csv', index=False)
+    
+    print("Results saved to 'simulation_results.csv'")
